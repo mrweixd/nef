@@ -94,6 +94,7 @@ type Configuration struct {
 	NrfUri          string         `yaml:"nrfUri,omitempty" valid:"required"`
 	NrfCertPem      string         `yaml:"nrfCertPem,omitempty" valid:"optional"`
 	ServiceList     []Service      `yaml:"serviceList,omitempty" valid:"required"`
+	NrfNfInstanceId string `yaml:"nrfNfInstanceId,omitempty" valid:"optional,uuidv4"`
 }
 
 type Logger struct {
@@ -504,6 +505,12 @@ func (c *Config) NrfCertPem() string {
 		return c.Configuration.NrfCertPem
 	}
 	return "" // havn't setup in config
+}
+
+func (c *Config) NrfNfInstanceID() string {
+	c.RLock()
+	defer c.RUnlock()
+	return c.Configuration.NrfNfInstanceId
 }
 
 func (c *Config) ServiceList() []Service {
