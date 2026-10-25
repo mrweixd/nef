@@ -72,6 +72,10 @@ func NewApp(
 	if nef.proc, err = processor.NewProcessor(nef); err != nil {
 		return nil, err
 	}
+	if nef.nefCtx.OAuthHTTPClient, err = cfg.NewOAuthHTTPClient(); err != nil {
+		return nil, err
+	}
+
 	if nef.sbiServer, err = sbi.NewServer(nef, tlsKeyLogPath); err != nil {
 		return nil, err
 	}

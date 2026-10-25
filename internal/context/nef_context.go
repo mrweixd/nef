@@ -3,6 +3,7 @@ package context
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"strings"
 	"sync"
 
@@ -25,6 +26,8 @@ type NFContext interface {
 var _ NFContext = &NefContext{}
 
 type NefContext struct {
+	// OAuthHTTPClient is configured at startup and must not be mutated after use.
+	OAuthHTTPClient *http.Client
 	nef
 
 	nfInstID        string // NF Instance ID
@@ -211,7 +214,7 @@ func (c *NefContext) tokenRequest(serviceName models.Nrf_NFMgmt_ServiceName,
 ) oauth.TokenRequest {
 	return oauth.TokenRequest{
 		ConsumerNFType: models.Nrf_NFMgmt_NFType_NEF, ConsumerNFInstanceID: c.nfInstID,
-		TargetNFType: targetNF, NRFURI: c.Config().NrfUri(), Scope: string(serviceName),
+		TargetNFType: targetNF, NRFURI: c.Config().NrfUri(), Scope: string(serviceName), HTTPClient: c.OAuthHTTPClient,
 	}
 }
 
