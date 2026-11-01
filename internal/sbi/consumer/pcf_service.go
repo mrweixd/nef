@@ -125,22 +125,22 @@ func (s *npcfService) GetAppSession(appSessionId string) (
 // Request/Response: 5.3.2.3.1
 func (s *npcfService) PostAppSessions(
 	asc *models.Pcf_PolAuth_AppSessionContext,
-) (string, *models.ProblemDetails, error) {
+) (string, string, *models.ProblemDetails, error) {
 	uri, err := s.getPcfPolicyAuthUri()
 	if err != nil {
-		return "", nil, err
+		return "", "", nil, err
 	}
 
 	client := s.getPolicyAuthClient(uri)
 
 	if client == nil {
-		return "", nil, openapi.ReportError("could not initialize the PolicyAuthorization client")
+		return "", "", nil, openapi.ReportError("could not initialize the PolicyAuthorization client")
 	}
 
 	ctx, _, err := s.consumer.Context().GetTokenCtx(
 		models.Nrf_NFMgmt_ServiceName_NPCF_POLICYAUTHORIZATION, models.Nrf_NFMgmt_NFType_PCF)
 	if err != nil {
-		return "", nil, err
+		return "", "", nil, err
 	}
 
 	appSessionsRequest := PolAuth.PostAppSessionsRequest{
@@ -156,26 +156,24 @@ func (s *npcfService) PostAppSessions(
 		case openapi.GenericOpenAPIError:
 			switch errorModel := apiErr.Model().(type) {
 			case PolAuth.PostAppSessionsError:
-				return "", errorModel.ProblemDetails, nil
+				return "", "", errorModel.ProblemDetails, nil
 			case error:
-				return "", openapi.ProblemDetailsSystemFailure(errorModel.Error()), nil
+				return "", "", openapi.ProblemDetailsSystemFailure(errorModel.Error()), nil
 			default:
-				return "", nil, openapi.ReportError("openapi error")
+				return "", "", nil, openapi.ReportError("openapi error")
 			}
 		case error:
-			return "", openapi.ProblemDetailsSystemFailure(apiErr.Error()), nil
+			return "", "", openapi.ProblemDetailsSystemFailure(apiErr.Error()), nil
 		default:
-			return "", nil, openapi.ReportError("server no response")
+			return "", "", nil, openapi.ReportError("server no response")
 		}
 	}
 
-	var sessId string
-
-	if postAppSessionsRsp != nil {
-		sessId = getAppSessIDFromRspLocationHeader(postAppSessionsRsp.Location)
+	if postAppSessionsRsp == nil || postAppSessionsRsp.Location == "" {
+		return "", "", nil, openapi.ReportError("PCF omitted app-session location")
 	}
-
-	return sessId, nil, nil
+	location := postAppSessionsRsp.Location
+	return getAppSessIDFromRspLocationHeader(location), location, nil, nil
 }
 
 func (s *npcfService) PutAppSession(

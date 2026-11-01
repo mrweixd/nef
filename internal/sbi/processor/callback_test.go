@@ -6,8 +6,11 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
+	nef_context "github.com/free5gc/nef/internal/context"
+	"github.com/free5gc/nef/pkg/factory"
 	"github.com/free5gc/openapi"
 	"github.com/free5gc/openapi/models"
 	"github.com/gin-gonic/gin"
@@ -229,4 +232,49 @@ func TestSmfNotification_AfReturnsError(t *testing.T) {
 	c.Writer.WriteHeaderNow()
 
 	require.Equal(t, http.StatusBadGateway, w.Code)
+}
+
+func TestPcfTerminationStaysInsideNEF(t *testing.T) {
+	ctx := nefApp.Context()
+	p := nefApp.Processor()
+	af := ctx.GetOrCreateAf("pcf-termination-test")
+	t.Cleanup(func() { ctx.DeleteAf(af.AfID) })
+
+	// The PCF may only target the configured NEF service. A termination
+	// notification must not be relayed to the AF, even for a valid session.
+	var hits atomic.Int32
+	external := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		hits.Add(1)
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer external.Close()
+	ti := &models.Nef_TrafInfl_TrafficInfluSub{NotificationDestination: external.URL}
+	makeSub := func(ident string) *nef_context.AfSubscription {
+		corr := ctx.NewCorreID()
+		af.Mu.Lock()
+		defer af.Mu.Unlock()
+		sub := af.NewSub(corr, ti)
+		sub.AppSessID = ident
+		sub.AppSessURI = "https://pcf.internal/npcf-policyauthorization/v1/app-sessions/" + ident
+		af.Subs[sub.SubID] = sub
+		return sub
+	}
+	first, other := makeSub("imsi-001010000000001-1"), makeSub("other")
+	callback := p.convertTrafficInfluSubToAppSessionContext(ti, first.NotifCorreID).AscReqData.NotifUri
+	prefix := nefApp.Config().ServiceUri(factory.ServiceNefCallback) + "/notification/pcf/"
+	require.Equal(t, prefix+first.NotifCorreID, callback)
+	send := func(correlation, uri string) int {
+		c, w := newGinContext()
+		p.PcfTermination(c, correlation, uri)
+		c.Writer.WriteHeaderNow()
+		return w.Code
+	}
+	require.Equal(t, http.StatusNotFound, send(first.NotifCorreID, other.AppSessURI))
+	require.Equal(t, http.StatusNotFound, send(first.NotifCorreID, external.URL+"/"+first.AppSessID))
+	require.Len(t, af.Subs, 2)
+	require.Equal(t, http.StatusNoContent, send(first.NotifCorreID, first.AppSessURI))
+	require.NotContains(t, af.Subs, first.SubID)
+	require.Contains(t, af.Subs, other.SubID)
+	require.Equal(t, http.StatusNotFound, send(first.NotifCorreID, first.AppSessURI))
+	require.Zero(t, hits.Load())
 }

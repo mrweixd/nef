@@ -81,7 +81,7 @@ func (p *Processor) PostTrafficInfluenceSubscription(
 	if len(tiSub.Gpsi) > 0 || len(tiSub.Ipv4Addr) > 0 || len(tiSub.Ipv6Addr) > 0 {
 		// Single UE, sent to PCF
 		asc := p.convertTrafficInfluSubToAppSessionContext(tiSub, afSub.NotifCorreID)
-		appSessId, pd, err := p.Consumer().PostAppSessions(asc)
+		appSessId, location, pd, err := p.Consumer().PostAppSessions(asc)
 		switch {
 		case pd != nil:
 			c.Set(sbi.IN_PB_DETAILS_CTX_STR, pd.Cause)
@@ -96,7 +96,7 @@ func (p *Processor) PostTrafficInfluenceSubscription(
 			c.JSON(int(problemDetails.Status), problemDetails)
 			return
 		default:
-			afSub.AppSessID = appSessId
+			afSub.AppSessID, afSub.AppSessURI = appSessId, location
 		}
 	} else if len(tiSub.ExternalGroupId) > 0 || tiSub.AnyUeInd {
 		// Group or any UE, sent to UDR
@@ -216,12 +216,12 @@ func (p *Processor) PutIndividualTrafficInfluenceSubscription(
 	appSessID := afSub.AppSessID
 	influID := afSub.InfluID
 	notifCorreID := afSub.NotifCorreID
+	updatedAppSessID, updatedURI := appSessID, afSub.AppSessURI
 	af.Mu.RUnlock()
 
-	updatedAppSessID := appSessID
 	if appSessID != "" {
 		asc := p.convertTrafficInfluSubToAppSessionContext(tiSub, notifCorreID)
-		appSessId, pd, err := p.Consumer().PostAppSessions(asc)
+		appSessId, location, pd, err := p.Consumer().PostAppSessions(asc)
 
 		switch {
 		case pd != nil:
@@ -237,7 +237,7 @@ func (p *Processor) PutIndividualTrafficInfluenceSubscription(
 			c.JSON(int(problemDetails.Status), problemDetails)
 			return
 		default:
-			updatedAppSessID = appSessId
+			updatedAppSessID, updatedURI = appSessId, location
 		}
 	} else if influID != "" {
 		tiData := p.convertTrafficInfluSubToTrafficInfluData(tiSub, notifCorreID)
@@ -266,7 +266,7 @@ func (p *Processor) PutIndividualTrafficInfluenceSubscription(
 
 	af.Mu.Lock()
 	afSub.TiSub = tiSub
-	afSub.AppSessID = updatedAppSessID
+	afSub.AppSessID, afSub.AppSessURI = updatedAppSessID, updatedURI
 	af.Mu.Unlock()
 
 	c.JSON(http.StatusOK, afSub.TiSub)
@@ -458,8 +458,10 @@ func validateTrafficInfluenceData(
 		return pd
 	}
 
-	parsedNotificationDestination, err := url.ParseRequestURI(tiSub.NotificationDestination)
-	if err != nil || parsedNotificationDestination.Scheme == "" || parsedNotificationDestination.Host == "" {
+	parsedNotificationDestination, err := url.Parse(tiSub.NotificationDestination)
+	if err != nil || (parsedNotificationDestination.Scheme != "http" && parsedNotificationDestination.Scheme != "https") ||
+		parsedNotificationDestination.Hostname() == "" || parsedNotificationDestination.User != nil ||
+		parsedNotificationDestination.Fragment != "" {
 		pd := openapi.ProblemDetailsMalformedReqSyntax("Invalid notificationDestination")
 		return pd
 	}
@@ -527,7 +529,7 @@ func (p *Processor) convertTrafficInfluSubToAppSessionContext(
 			UeIpv4:    tiSub.Ipv4Addr,
 			UeIpv6:    tiSub.Ipv6Addr,
 			UeMac:     tiSub.MacAddr,
-			NotifUri:  tiSub.NotificationDestination,
+			NotifUri:  p.Config().ServiceUri(factory.ServiceNefCallback) + "/notification/pcf/" + notifCorreID,
 			SuppFeat:  tiSub.SuppFeat,
 			Dnn:       tiSub.Dnn,
 			SliceInfo: tiSub.Snssai,

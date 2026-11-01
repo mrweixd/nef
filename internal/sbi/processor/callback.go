@@ -129,3 +129,23 @@ func bindOAuthTokenToRequest(req *http.Request, requestCtx context.Context) erro
 	latestToken.SetAuthHeader(req)
 	return nil
 }
+
+// PcfTermination consumes the PCF notification locally. TS 29.522 Traffic
+// Influence has no corresponding AF termination notification.
+func (p *Processor) PcfTermination(c *gin.Context, correlationID, resourceURI string) {
+	af, sub := p.Context().FindAfSub(correlationID)
+	if sub != nil {
+		sub.OpMu.Lock()
+		defer sub.OpMu.Unlock()
+		af.Mu.Lock()
+		defer af.Mu.Unlock()
+		if af.Subs[sub.SubID] == sub && sub.AppSessID != "" && sub.AppSessURI == resourceURI && resourceURI != "" {
+			delete(af.Subs, sub.SubID)
+			c.Status(http.StatusNoContent)
+			return
+		}
+	}
+	pd := openapi.ProblemDetailsDataNotFound("Application session not found")
+	c.Set(sbi.IN_PB_DETAILS_CTX_STR, pd.Cause)
+	c.JSON(http.StatusNotFound, pd)
+}

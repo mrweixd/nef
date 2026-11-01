@@ -16,6 +16,7 @@ var servicePolicies = map[models.Nrf_NFMgmt_ServiceName][]models.Nrf_NFMgmt_NFTy
 		models.Nrf_NFMgmt_NFType_AF,
 	},
 	ServiceNameNnefCallback: {
+		models.Nrf_NFMgmt_NFType_PCF,
 		models.Nrf_NFMgmt_NFType_SMF,
 	},
 	// OAM authorization is intentionally unchanged until management-plane

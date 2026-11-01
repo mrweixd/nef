@@ -1022,3 +1022,14 @@ func assertJSONBodyEqual(t *testing.T, expectedBody interface{}, actualBody []by
 
 	require.Equal(t, expectedData, actualData)
 }
+
+func TestRejectMalformedAFCallback(t *testing.T) {
+	for _, dest := range []string{
+		"file:///tmp/f", "ftp://af.example/cb",
+		"https://user:pass@af.example/cb", "https://af.example/cb#fragment", "/relative",
+	} {
+		sub := tiSub1ForAf1
+		sub.NotificationDestination = dest
+		require.NotNil(t, validateTrafficInfluenceData(&sub), dest)
+	}
+}
