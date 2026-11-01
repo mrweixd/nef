@@ -10,6 +10,7 @@ import (
 type AfSubscription struct {
 	SubID        string
 	TiSub        *models.Nef_TrafInfl_TrafficInfluSub
+	AppSessURI   string // PCF-provided Location, used only for callback correlation
 	AppSessID    string // use in single UE case
 	InfluID      string // use in multiple UE case
 	NotifCorreID string

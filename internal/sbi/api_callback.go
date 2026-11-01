@@ -12,6 +12,7 @@ import (
 
 func (s *Server) getCallbackRoutes() []Route {
 	return []Route{
+		{Method: http.MethodPost, Pattern: "/notification/pcf/:correlationID/terminate", APIFunc: s.apiPcfTermination},
 		{
 			Method:  http.MethodPost,
 			Pattern: "/notification/smf",
@@ -41,4 +42,15 @@ func (s *Server) apiPostSmfNotification(gc *gin.Context) {
 	}
 
 	s.Processor().SmfNotification(gc, &eeNotif)
+}
+
+func (s *Server) apiPcfTermination(c *gin.Context) {
+	var info models.Pcf_PolAuth_TerminationInfo
+	if err := c.ShouldBindJSON(&info); err != nil || info.ResUri == "" || info.TermCause == "" {
+		pd := openapi.ProblemDetailsMalformedReqSyntax("Invalid termination notification")
+		c.Set(sbi.IN_PB_DETAILS_CTX_STR, pd.Cause)
+		c.JSON(http.StatusBadRequest, pd)
+		return
+	}
+	s.Processor().PcfTermination(c, c.Param("correlationID"), info.ResUri)
 }
