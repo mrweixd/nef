@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/http"
 	"net/url"
 	"strconv"
 	"sync"
@@ -392,4 +393,34 @@ func getUriFromIpEndPoint(scheme models.UriScheme, ipv4Address string, port int3
 		}
 	}
 	return uri
+}
+
+// RegisteredCallbackCaller resolves the verified JWT subject at the configured
+// NRF. Do not infer its role from request parameters or from the shared scope.
+func (s *nnrfService) RegisteredCallbackCaller(subject string, required models.Nrf_NFMgmt_NFType) (bool, error) {
+	client := s.getNFDiscoveryClient(s.consumer.Config().NrfUri())
+	ctx, _, err := s.consumer.Context().GetTokenCtxForNRF(models.Nrf_NFMgmt_ServiceName_NNRF_DISC)
+	if err != nil {
+		return false, err
+	}
+	requester := models.Nrf_NFMgmt_NFType_NEF
+	res, err := client.NFInstancesStoreApi.SearchNFInstances(ctx, &NFDisc.SearchNFInstancesRequest{
+		TargetNfInstanceId: &subject, TargetNfType: &required, RequesterNfType: &requester,
+	})
+	if err != nil {
+		var apiErr openapi.GenericOpenAPIError
+		if errors.As(err, &apiErr) && apiErr.ErrorStatus == http.StatusNotFound {
+			return false, nil
+		}
+		return false, err
+	}
+	if res == nil || res.Nrf_NFDisc_SearchResult == nil {
+		return false, fmt.Errorf("empty NRF discovery response")
+	}
+	for _, nf := range res.Nrf_NFDisc_SearchResult.NfInstances {
+		if nf.NfInstanceId == subject && nf.NfType == required && nf.NfStatus == models.Nrf_NFMgmt_NFStatus_REGISTERED {
+			return true, nil
+		}
+	}
+	return false, nil
 }

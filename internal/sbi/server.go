@@ -123,6 +123,16 @@ func mountCallbackRoutes(router *gin.Engine, s *Server, authContext nef_context.
 	callbackGroup := router.Group(factory.NefCallbackResUriPrefix)
 	callbackGroup.Use(func(c *gin.Context) {
 		callbackAuthCheck.Check(c, authContext)
+		if !c.IsAborted() && s.Context().OAuth2Required {
+			// VerifyOAuth has already verified this exact bearer token. Decode
+			// its signed subject only after signature, issuer, audience and scope.
+			subject, ok := verifiedCallbackSubject(c.GetHeader("Authorization"))
+			if !ok {
+				c.AbortWithStatus(http.StatusForbidden)
+				return
+			}
+			c.Set(callbackSubjectKey, subject)
+		}
 	})
 	applyRoutes(callbackGroup, s.getCallbackRoutes())
 }

@@ -33,10 +33,11 @@ import (
 type interopApp struct {
 	terminationTestApp
 	proc *processor.Processor
+	cons *consumer.Consumer
 }
 
 func (a *interopApp) Processor() *processor.Processor { return a.proc }
-func (*interopApp) Consumer() *consumer.Consumer      { return nil }
+func (a *interopApp) Consumer() *consumer.Consumer    { return a.cons }
 func (*interopApp) Notifier() *notifier.Notifier      { return nil }
 
 func interopServer(t *testing.T, h http.Handler) *httptest.Server {
@@ -65,12 +66,15 @@ func TestPCFTerminationInterop(t *testing.T) {
 	require.NoError(t, err)
 	path := filepath.Join(t.TempDir(), "nrf.pem")
 	require.NoError(t, os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600))
+	roleNRF := interopServer(t, callbackRoleRegistry(t, owner, map[string]string{"PCF": caller}, nil))
 	a := &interopApp{terminationTestApp: terminationTestApp{cfg: &factory.Config{Configuration: &factory.Configuration{
-		NfInstanceId: owner, NrfCertPem: path, NrfUri: "http://nrf.test", Sbi: &factory.Sbi{BindingIPv4: "127.0.0.1"},
+		NfInstanceId: owner, NrfCertPem: path, NrfUri: roleNRF.URL, Sbi: &factory.Sbi{BindingIPv4: "127.0.0.1"},
 	}}}}
 	a.ctx, err = nfcontext.NewContext(a)
 	require.NoError(t, err)
 	require.NoError(t, a.ctx.SetOAuth2Required(true))
+	a.cons, err = consumer.NewConsumer(a)
+	require.NoError(t, err)
 	a.proc, err = processor.NewProcessor(a)
 	require.NoError(t, err)
 	s, err := NewServer(a, "")

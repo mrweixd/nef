@@ -41,6 +41,9 @@ func (s *Server) apiPostSmfNotification(gc *gin.Context) {
 		return
 	}
 
+	if !s.authorizeCallbackOperation(gc, models.Nrf_NFMgmt_NFType_SMF) {
+		return
+	}
 	s.Processor().SmfNotification(gc, &eeNotif)
 }
 
@@ -50,6 +53,9 @@ func (s *Server) apiPcfTermination(c *gin.Context) {
 		pd := openapi.ProblemDetailsMalformedReqSyntax("Invalid termination notification")
 		c.Set(sbi.IN_PB_DETAILS_CTX_STR, pd.Cause)
 		c.JSON(http.StatusBadRequest, pd)
+		return
+	}
+	if !s.authorizeCallbackOperation(c, models.Nrf_NFMgmt_NFType_PCF) {
 		return
 	}
 	s.Processor().PcfTermination(c, c.Param("correlationID"), info.ResUri)

@@ -60,7 +60,7 @@ func TestCallbackOAuthRoute(t *testing.T) {
 	for _, name := range []string{"missing", "valid", "wrong_scope", "wrong_audience", "expired", "disabled"} {
 		t.Run(name, func(t *testing.T) {
 			claims := jwt.MapClaims{
-				"iss": issuer, "aud": producer,
+				"iss": issuer, "aud": producer, "sub": uuid.NewString(),
 				"exp": time.Now().Add(time.Hour).Unix(), "scope": "nnef-callback",
 			}
 			switch name {

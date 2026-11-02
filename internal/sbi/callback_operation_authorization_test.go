@@ -18,6 +18,7 @@ import (
 	"time"
 
 	nfcontext "github.com/free5gc/nef/internal/context"
+	"github.com/free5gc/nef/internal/sbi/consumer"
 	"github.com/free5gc/nef/internal/sbi/processor"
 	"github.com/free5gc/nef/pkg/factory"
 	"github.com/free5gc/openapi/models"
@@ -41,24 +42,17 @@ func TestCallbackOperationAuthorization(t *testing.T) {
 	require.NoError(t, err)
 	path := filepath.Join(t.TempDir(), "nrf.pem")
 	require.NoError(t, os.WriteFile(path, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: der}), 0o600))
-	// Stand in for the NRF only on the NEF-to-AF outbound token request.
-	nrf := interopServer(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/oauth2/token" || r.ParseForm() != nil || r.Form.Get("nfInstanceId") != owner ||
-			r.Form.Get("targetNfType") != "AF" || r.Form.Get("scope") != "nnef-callback" {
-			w.WriteHeader(http.StatusForbidden)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
-			"access_token": "outbound-af-token", "token_type": "Bearer", "expires_in": 60, "scope": "nnef-callback",
-		}))
-	}))
+	subjects := map[string]string{"PCF": uuid.NewString(), "SMF": uuid.NewString()}
+	var down atomic.Bool
+	nrf := interopServer(t, callbackRoleRegistry(t, owner, subjects, &down))
 	a := &interopApp{terminationTestApp: terminationTestApp{cfg: &factory.Config{Configuration: &factory.Configuration{
 		NfInstanceId: owner, NrfCertPem: path, NrfUri: nrf.URL, Sbi: &factory.Sbi{BindingIPv4: "127.0.0.1"},
 	}}}}
 	a.ctx, err = nfcontext.NewContext(a)
 	require.NoError(t, err)
 	require.NoError(t, a.ctx.SetOAuth2Required(true))
+	a.cons, err = consumer.NewConsumer(a)
+	require.NoError(t, err)
 	a.proc, err = processor.NewProcessor(a)
 	require.NoError(t, err)
 	s, err := NewServer(a, "")
@@ -67,7 +61,7 @@ func TestCallbackOperationAuthorization(t *testing.T) {
 
 	// NF roles are known to the issuer fixture; the signed subject is its
 	// instance ID, not an invented caller-type claim in the token.
-	subjects := map[string]string{"PCF": uuid.NewString(), "SMF": uuid.NewString()}
+
 	for _, tc := range []struct {
 		name, caller, route string
 		authorized          bool
@@ -76,8 +70,12 @@ func TestCallbackOperationAuthorization(t *testing.T) {
 		{"SMF_to_smf", "SMF", "smf", true},
 		{"SMF_to_terminate", "SMF", "terminate", false},
 		{"PCF_to_smf", "PCF", "smf", false},
+		{"unregistered_subject", "PCF", "terminate", false},
+		{"missing_subject", "PCF", "terminate", false},
+		{"unavailable_NRF", "PCF", "terminate", false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			down.Store(tc.name == "unavailable_NRF")
 			var hits atomic.Int32
 			receiver := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				hits.Add(1)
@@ -96,6 +94,12 @@ func TestCallbackOperationAuthorization(t *testing.T) {
 			claims := jwt.MapClaims{
 				"iss": issuer, "sub": subjects[tc.caller], "aud": owner, "scope": "nnef-callback",
 				"exp": time.Now().Add(time.Minute).Unix(),
+			}
+			if tc.name == "unregistered_subject" {
+				claims["sub"] = uuid.NewString()
+			}
+			if tc.name == "missing_subject" {
+				delete(claims, "sub")
 			}
 			token, err := jwt.NewWithClaims(jwt.SigningMethodRS512, claims).SignedString(key)
 			require.NoError(t, err)
@@ -125,9 +129,13 @@ func TestCallbackOperationAuthorization(t *testing.T) {
 			if tc.authorized {
 				assert.Equal(t, http.StatusNoContent, resp.StatusCode)
 			} else {
-				assert.Contains(t, []int{401, 403}, resp.StatusCode)
+				if down.Load() {
+					assert.Equal(t, http.StatusServiceUnavailable, resp.StatusCode)
+				} else {
+					assert.Equal(t, http.StatusForbidden, resp.StatusCode)
+				}
 			}
-			assert.Equal(t, !(tc.authorized && tc.route == "terminate"), exists)
+			assert.Equal(t, !tc.authorized || tc.route != "terminate", exists)
 			var want int32
 			if tc.authorized && tc.route == "smf" {
 				want = 1
@@ -135,4 +143,51 @@ func TestCallbackOperationAuthorization(t *testing.T) {
 			assert.Equal(t, want, hits.Load())
 		})
 	}
+}
+
+// The fixture returns the registered subject's actual role, even when it differs
+// from the query, so the consumer must check the returned profile itself.
+func callbackRoleRegistry(t *testing.T, owner string, roles map[string]string, down *atomic.Bool) http.Handler {
+	t.Helper()
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/oauth2/token":
+			if r.ParseForm() != nil || r.Form.Get("nfInstanceId") != owner {
+				http.Error(w, "bad consumer", http.StatusForbidden)
+				return
+			}
+			tok := "outbound-af-token"
+			if r.Form.Get("scope") == "nnrf-disc" && r.Form.Get("targetNfType") == "NRF" {
+				tok = "discovery-token"
+			} else if r.Form.Get("scope") != "nnef-callback" || r.Form.Get("targetNfType") != "AF" {
+				http.Error(w, "bad scope", http.StatusForbidden)
+				return
+			}
+			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"access_token": tok, "token_type": "Bearer", "expires_in": 60, "scope": r.Form.Get("scope"),
+			}))
+		case "/nnrf-disc/v1/nf-instances":
+			if down != nil && down.Load() {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				return
+			}
+			assert.Equal(t, "Bearer discovery-token", r.Header.Get("Authorization"))
+			q := r.URL.Query()
+			assert.Equal(t, "NEF", q.Get("requester-nf-type"))
+			for role, id := range roles {
+				if q.Get("target-nf-instance-id") == id {
+					assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"nfInstances": []any{map[string]any{
+						"nfInstanceId": id, "nfType": role, "nfStatus": "REGISTERED",
+					}}}))
+					return
+				}
+			}
+			w.Header().Set("Content-Type", "application/problem+json")
+			w.WriteHeader(http.StatusNotFound)
+			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"status": 404, "cause": "NF_NOT_FOUND"}))
+		default:
+			http.NotFound(w, r)
+		}
+	})
 }
