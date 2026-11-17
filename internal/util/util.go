@@ -1,9 +1,9 @@
 package util
 
 import (
-	"github.com/free5gc/nef/pkg/factory"
 	nef_context "github.com/free5gc/nef/internal/context"
 	"github.com/free5gc/nef/internal/logger"
+	"github.com/free5gc/nef/pkg/factory"
 	"github.com/free5gc/openapi/models"
 	"github.com/gin-gonic/gin"
 )
