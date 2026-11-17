@@ -1,10 +1,9 @@
 package util
 
 import (
-	"net/http"
-
 	nef_context "github.com/free5gc/nef/internal/context"
 	"github.com/free5gc/nef/internal/logger"
+	"github.com/free5gc/nef/pkg/factory"
 	"github.com/free5gc/openapi/models"
 	"github.com/gin-gonic/gin"
 )
@@ -28,7 +27,15 @@ func (rac *RouterAuthorizationCheck) Check(c *gin.Context, nefCtx nef_context.NF
 	token := c.Request.Header.Get("Authorization")
 	if err := nefCtx.AuthorizationCheck(token, rac.serviceName); err != nil {
 		logger.UtilLog.Debugf("RouterAuthorizationCheck::Check Unauthorized: %s", err.Error())
-		c.JSON(http.StatusUnauthorized, gin.H{"error": err.Error()})
+		baseURI := "http://localhost"
+		if withConfig, ok := nefCtx.(interface{ Config() *factory.Config }); ok {
+			if cfg := withConfig.Config(); cfg != nil {
+				baseURI = cfg.SbiUri()
+			}
+		}
+		status, challenge, reason := oauthChallenge(c.Request, string(rac.serviceName), token, err, baseURI)
+		c.Header("WWW-Authenticate", challenge)
+		c.JSON(status, gin.H{"error": reason})
 		c.Abort()
 		return
 	}
