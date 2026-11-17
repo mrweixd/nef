@@ -1,15 +1,15 @@
 package util
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"github.com/gin-gonic/gin"
-
 	"github.com/free5gc/openapi/models"
+	"github.com/gin-gonic/gin"
 )
 
 type oauthChallengeStub struct {
@@ -34,7 +34,7 @@ func TestRouterOAuthBearerResponse(t *testing.T) {
 			name:      "missing bearer",
 			err:       errors.New("verify OAuth Authorization header invalid"),
 			status:    http.StatusUnauthorized,
-			required:  `Bearer realm="http://pcf.free5gc.org:8000/npcf-smpolicycontrol/v1"`,
+			required:  `Bearer realm="http://localhost/npcf-smpolicycontrol/v1"`,
 			forbidden: "error=",
 		},
 		{
@@ -59,7 +59,7 @@ func TestRouterOAuthBearerResponse(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			req := httptest.NewRequest(http.MethodGet,
+			req := httptest.NewRequestWithContext(context.Background(), http.MethodGet,
 				"http://pcf.free5gc.org:8000/npcf-smpolicycontrol/v1/sm-policies/unknown", nil)
 			if tt.auth != "" {
 				req.Header.Set("Authorization", tt.auth)
@@ -73,7 +73,8 @@ func TestRouterOAuthBearerResponse(t *testing.T) {
 				t.Fatalf("status: got %d want %d: %s", recorder.Code, tt.status, recorder.Body.String())
 			}
 			header := recorder.Header().Get("WWW-Authenticate")
-			if !strings.Contains(header, tt.required) || (tt.forbidden != "" && strings.Contains(header, tt.forbidden)) {
+			if !strings.Contains(header, tt.required) ||
+				(tt.forbidden != "" && strings.Contains(header, tt.forbidden)) {
 				t.Fatalf("challenge: got %q, required %q, forbidden %q", header, tt.required, tt.forbidden)
 			}
 		})
