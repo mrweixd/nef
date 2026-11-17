@@ -17,15 +17,17 @@ import (
 	"github.com/davecgh/go-spew/spew"
 	"github.com/free5gc/nef/internal/logger"
 	"github.com/free5gc/openapi/models"
+	"github.com/free5gc/util/nfheartbeat"
 	"github.com/google/uuid"
 )
 
 const (
-	ServiceTraffInflu  string = "3gpp-traffic-influence"
-	ServicePfdMng      string = "3gpp-pfd-management"
-	ServiceNefPfd      string = string(models.Nrf_NFMgmt_ServiceName_NNEF_PFDMANAGEMENT)
-	ServiceNefOam      string = "nnef-oam"
-	ServiceNefCallback string = "nnef-callback"
+	ServiceTraffInflu         string = "3gpp-traffic-influence"
+	ServicePfdMng             string = "3gpp-pfd-management"
+	ServiceNefPfd             string = string(models.Nrf_NFMgmt_ServiceName_NNEF_PFDMANAGEMENT)
+	ServiceNefOam             string = "nnef-oam"
+	ServiceNefCallback        string = "nnef-callback"
+	ServiceNefMonitoringEvent string = string(models.Nrf_NFMgmt_ServiceName_3GPP_MONITORING_EVENT)
 )
 
 const (
@@ -48,6 +50,7 @@ const (
 	NefPfdMngResUriPrefix        = "/" + ServiceNefPfd + "/v1"
 	NefOamResUriPrefix           = "/" + ServiceNefOam + "/v1"
 	NefCallbackResUriPrefix      = "/" + ServiceNefCallback + "/v1"
+	MonitoringEventResUriPrefix  = "/" + ServiceNefMonitoringEvent + "/v1"
 )
 
 type Config struct {
@@ -94,6 +97,9 @@ type Configuration struct {
 	NrfUri          string         `yaml:"nrfUri,omitempty" valid:"required"`
 	NrfCertPem      string         `yaml:"nrfCertPem,omitempty" valid:"optional"`
 	ServiceList     []Service      `yaml:"serviceList,omitempty" valid:"required"`
+	// NfHeartBeatTimer is the fallback heartbeat interval in seconds, from 1 to
+	// 3600 as the NRF accepts. The interval the NRF assigns always wins.
+	NfHeartBeatTimer int32 `yaml:"nfHeartBeatTimer,omitempty" valid:"optional,range(1|3600)"`
 }
 
 type Logger struct {
@@ -133,17 +139,30 @@ func (c *Configuration) validate() (bool, error) {
 		case ServiceNefOam:
 		case ServiceTraffInflu:
 		case ServiceNefCallback:
+		case ServiceNefMonitoringEvent:
 		default:
 			err := errors.New(
 				"invalid serviceList[" + strconv.Itoa(i) + "]: " +
 					s.ServiceName + ", should be " + ServiceNefPfd + ", " +
-					ServiceNefOam + ", " + ServiceTraffInflu + ", or " + ServiceNefCallback,
+					ServiceNefOam + ", " + ServiceTraffInflu + ", " + ServiceNefCallback +
+					", or " + ServiceNefMonitoringEvent,
 			)
 			return false, appendInvalid(err)
 		}
 	}
 	result, err := govalidator.ValidateStruct(c)
 	return result, appendInvalid(err)
+}
+
+// GetNfHeartBeatTimer returns the fallback heartbeat interval in seconds.
+func (c *Config) GetNfHeartBeatTimer() int32 {
+	c.RLock()
+	defer c.RUnlock()
+
+	if c.Configuration != nil && c.Configuration.NfHeartBeatTimer > 0 {
+		return c.Configuration.NfHeartBeatTimer
+	}
+	return nfheartbeat.DefaultTimer
 }
 
 func (c *Config) GetNfInstanceId() string {
@@ -197,8 +216,9 @@ type Service struct {
 }
 
 type Tls struct {
-	Pem string `yaml:"pem,omitempty" valid:"type(string),minstringlength(1),required"`
-	Key string `yaml:"key,omitempty" valid:"type(string),minstringlength(1),required"`
+	Verify bool   `yaml:"verify,omitempty" valid:"type(bool)"`
+	Pem    string `yaml:"pem,omitempty" valid:"type(string),minstringlength(1),required"`
+	Key    string `yaml:"key,omitempty" valid:"type(string),minstringlength(1),required"`
 }
 
 func (t *Tls) validate() (bool, error) {
@@ -579,6 +599,8 @@ func (c *Config) ServiceUri(name string) string {
 		return c.SbiUri() + NefOamResUriPrefix
 	case ServiceNefCallback:
 		return c.SbiUri() + NefCallbackResUriPrefix
+	case ServiceNefMonitoringEvent:
+		return c.SbiUri() + MonitoringEventResUriPrefix
 	default:
 		return ""
 	}
@@ -613,4 +635,16 @@ func (c *Config) GetPingTimeout() time.Duration {
 		return 2 * time.Second
 	}
 	return *c.Configuration.PingTimeout
+}
+
+// GetTLSVerify controls outgoing SBI server certificate verification.
+// Configuration is read before traffic starts; omitted verify retains false.
+func (c *Config) GetTLSVerify() bool {
+	if c == nil {
+		return false
+	}
+	c.RLock()
+	defer c.RUnlock()
+	return c.Configuration != nil && c.Configuration.Sbi != nil &&
+		c.Configuration.Sbi.Tls != nil && c.Configuration.Sbi.Tls.Verify
 }

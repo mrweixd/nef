@@ -47,14 +47,8 @@ func NewServer(nef nef, tlsKeyLogPath string) (*Server, error) {
 
 	s.router.Use(metrics.InboundMetrics())
 
-	// Callback endpoint: protected by OAuth2 middleware (callers must present
-	// a valid nnef-callback Bearer token issued by NRF).
-	callbackAuthCheck := nef_util.NewRouterAuthorizationCheck(models.Nrf_NFMgmt_ServiceName("nnef-callback"))
-	callbackGroup := s.router.Group(factory.NefCallbackResUriPrefix)
-	callbackGroup.Use(func(c *gin.Context) {
-		callbackAuthCheck.Check(c, s.Context())
-	})
-	applyRoutes(callbackGroup, s.getCallbackRoutes())
+	// TS 29.500 Rel-17 §6.7.3 excludes notify operations from OAuth.
+	applyRoutes(s.router.Group(factory.NefCallbackResUriPrefix), s.getCallbackRoutes())
 
 	// All other route groups are mounted only when their service is declared in
 	// ServiceList, and each group is protected by OAuth2 middleware.
@@ -94,6 +88,16 @@ func NewServer(nef nef, tlsKeyLogPath string) (*Server, error) {
 				authCheck.Check(c, s.Context())
 			})
 			applyRoutes(tiGroup, s.getTrafficInfluenceRoutes())
+
+		case factory.ServiceNefMonitoringEvent:
+			// 3gpp-monitoring-event is an AF-facing API (3GPP TS 29.122, reused by TS 29.522
+			// for 5GS);
+			authCheck := nef_util.NewRouterAuthorizationCheck(models.Nrf_NFMgmt_ServiceName_3GPP_MONITORING_EVENT)
+			monGroup := s.router.Group(factory.MonitoringEventResUriPrefix)
+			monGroup.Use(func(c *gin.Context) {
+				authCheck.Check(c, s.Context())
+			})
+			applyRoutes(monGroup, s.getMonitoringEventRoutes())
 		}
 	}
 
